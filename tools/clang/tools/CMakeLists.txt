@@ -15,6 +15,9 @@ if(CLANG_ENABLE_STATIC_ANALYZER)
   add_subdirectory(clang-check)
 endif()
 
+#
+add_subdirectory(libTooling_example)
+
 # We support checking out the clang-tools-extra repository into the 'extra'
 # subdirectory. It contains tools developed as part of the Clang/LLVM project
 # on top of the Clang tooling platform. We keep them in a separate repository
