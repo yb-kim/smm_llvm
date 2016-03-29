@@ -32,6 +32,7 @@ public:
         functionIndex = 0;
         stmtParser.ast_context_ = ast_context_;
         splitMethod = LOOP_ONLY;
+        //nStmts = 0;
     }
 
     enum SPLIT_METHOD { STRING, LOOP_ONLY };
@@ -69,11 +70,15 @@ private:
     set<VarDecl *> constantDecls;
     set<VarDecl *> varDeclsInsideSplitRange;
     list<string> varDeclStringsInsideSplitRange;
+    //list<Stmt *> splittedStmts;
+    //list<Stmt *> possiblySplittedStmts;
     unsigned int functionIndex;
+    //unsigned int nStmts;
 
     bool isSplitStartPoint(Stmt *stmt);
     bool isSplitEndPoint(Stmt *stmt);
-    void splitFunction(SourceLocation start, SourceLocation end);
+    //void splitFunction(SourceLocation start, SourceLocation end);
+    void splitFunction(list<Stmt *> *splittedStmts);
     string getNewFunctionName();
 };
 
