@@ -66,9 +66,15 @@ bool FunctionSplitter::VisitFunctionDecl(FunctionDecl *fd) {
         unsigned int nStmts = 0;
         list<Stmt *> splittedStmts;
         list<Stmt *> possiblySplittedStmts;
+        start = rewriter.getSourceMgr().getFileLoc(body->getLocStart());
+        end = rewriter.getSourceMgr().getFileLoc(body->getLocEnd());
+        unsigned int functionSize = rewriter.getRangeSize(
+                SourceRange(start, end));
+
         for(auto st : body->children()) {
             //save this point so if the function is too long, cut it
             if(!started && !isa<DeclStmt>(st)) {
+                /*
                 if(ForStmt *forStmt = dyn_cast<ForStmt>(st)) {
                     if(CompoundStmt *body = dyn_cast<CompoundStmt>(forStmt->getBody())) {
                         nStmts += body->size();
@@ -80,16 +86,21 @@ bool FunctionSplitter::VisitFunctionDecl(FunctionDecl *fd) {
                 } else {
                     nStmts++;
                 }
+                */
+                start = rewriter.getSourceMgr().getFileLoc(st->getLocStart());
+                end = rewriter.getSourceMgr().getFileLoc(st->getLocEnd());
+
+                nStmts += rewriter.getRangeSize(
+                        SourceRange(start, end));
+                errs() << fd->getName() << ": nStmts: " << nStmts <<"\n";
+
+                errs() << "start: " << start.printToString(rewriter.getSourceMgr()) << "\n";
+                errs() << "end: " << end.printToString(rewriter.getSourceMgr()) << "\n";
                 possiblySplittedStmts.push_back(st);
-                if(nStmts >= 10) {
-                    errs() << "split function since nStmts >= 10\n";
+                if(nStmts >= 500) {
+                    errs() << "split function since the function size is large\n";
                     splittedStmts.assign(possiblySplittedStmts.begin(),
                             possiblySplittedStmts.end());
-
-                    start = rewriter.getSourceMgr().getFileLoc(
-                            possiblySplittedStmts.front()->getLocStart());
-
-                    errs() << start.printToString(rewriter.getSourceMgr()) << "\n";
 
                     stmtParser.splitStartLocation = start;
                     started = true;
@@ -102,16 +113,16 @@ bool FunctionSplitter::VisitFunctionDecl(FunctionDecl *fd) {
                 nStmts = 0;
                 splittedStmts.clear();
                 possiblySplittedStmts.clear();
+                start = rewriter.getSourceMgr().getFileLoc(
+                        st->getLocStart());
                 if(splitMethod == LOOP_ONLY) {
-                    start = rewriter.getSourceMgr().getFileLoc(
-                            st->getLocStart());
                     stmtParser.splitStartLocation = start;
                     splittedStmts.push_back(st);
                     started = true;
                     ended= true;
                 } else if(splitMethod == STRING) {
-                stmtParser.splitStartLocation = start;
-                started = true;
+                    stmtParser.splitStartLocation = start;
+                    started = true;
                 }
             }
             if(started && !ended && isSplitEndPoint(st)) {
@@ -124,14 +135,18 @@ bool FunctionSplitter::VisitFunctionDecl(FunctionDecl *fd) {
 
             //start and end location are found
             if(ended) {
-                for(auto stmt : splittedStmts) {
-                    stmtParser.TraverseStmt(stmt);
+                if(reallySplit(&splittedStmts)) {
+                    for(auto stmt : splittedStmts) {
+                        stmtParser.TraverseStmt(stmt);
+                    }
+
+                    /*
+                    errs() << "start spliting from:" << start.printToString(rewriter.getSourceMgr()) << "\n";
+                    errs() << " to:" << end.printToString(rewriter.getSourceMgr()) << "\n";
+                    */
+
+                    splitFunction(&splittedStmts);
                 }
-
-                errs() << "start spliting from:" << start.printToString(rewriter.getSourceMgr()) << "\n";
-                errs() << " to:" << end.printToString(rewriter.getSourceMgr()) << "\n";
-
-                splitFunction(&splittedStmts);
 
                 started = false;
                 ended = false;
@@ -146,6 +161,11 @@ bool FunctionSplitter::VisitFunctionDecl(FunctionDecl *fd) {
             prevSt = st;
         }
     }
+    return true;
+}
+
+
+bool FunctionSplitter::reallySplit(list<Stmt *> *splittedStmts) {
     return true;
 }
 
@@ -362,6 +382,7 @@ void FunctionSplitter::splitFunction(list<Stmt *> *splittedStmts) {
 
 
 bool FunctionSplitter::isSplitStartPoint(Stmt *stmt) {
+    return false;
     if(splitMethod == STRING) {
         string SPLIT_START_STRING = "__SPLIT_START";
         if(ImplicitCastExpr *expr = dyn_cast<ImplicitCastExpr>(stmt)) {
@@ -392,6 +413,7 @@ bool FunctionSplitter::isSplitStartPoint(Stmt *stmt) {
 
 
 bool FunctionSplitter::isSplitEndPoint(Stmt *stmt) {
+    return false;
     string SPLIT_END_STRING = "__SPLIT_END";
     if(ImplicitCastExpr *expr = dyn_cast<ImplicitCastExpr>(stmt)) {
         Expr *subExpr = expr->getSubExpr();

@@ -79,6 +79,7 @@ private:
     bool isSplitEndPoint(Stmt *stmt);
     //void splitFunction(SourceLocation start, SourceLocation end);
     void splitFunction(list<Stmt *> *splittedStmts);
+    bool reallySplit(list<Stmt *> *splittedStmts);
     string getNewFunctionName();
 };
 
