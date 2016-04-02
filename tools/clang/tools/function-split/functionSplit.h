@@ -80,6 +80,7 @@ private:
     //void splitFunction(SourceLocation start, SourceLocation end);
     void splitFunction(list<Stmt *> *splittedStmts);
     bool reallySplit(list<Stmt *> *splittedStmts);
+    void selectSplitRegion(Stmt *compoundStmt, int rootFunctionSize=-1);
     string getNewFunctionName();
 };
 

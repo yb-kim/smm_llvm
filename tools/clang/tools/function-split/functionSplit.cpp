@@ -6,6 +6,8 @@ using namespace std;
 using namespace llvm;
 using namespace clang;
 
+int threshold;
+
 
 int main(int argc, const char **argv) {
     cl::OptionCategory functionSplitterCategory("function splitter options");
@@ -13,9 +15,18 @@ int main(int argc, const char **argv) {
 
     clang::tooling::ClangTool tool(op.getCompilations(), op.getSourcePathList());
 
-    for(int i=0; i<argc; i++) {
-        errs() << argv[i] << "\n";
+    int threshold_defalut = 700;
+    if(argc >= 1) {
+        string option(argv[1]);
+        if(option.substr(0, 11) == "--threshold") {
+            threshold = atoi(option.substr(11, option.length()+1).c_str());
+            errs() << "threshold is set to " << threshold << "\n";
+        }
+        else threshold = threshold_defalut;
+    } else {
+        threshold = threshold_defalut;
     }
+    errs() << "final threshold: " << threshold << "\n";
 
     tool.run(
             clang::tooling::newFrontendActionFactory<FunctionSplitFrontendAction>().get()
@@ -36,6 +47,138 @@ int main(int argc, const char **argv) {
     //rewriter.overwriteChangedFiles();
 
     return __function_index;
+}
+
+
+void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSize) {
+    if(!compoundStmt) return;
+    bool started = false, ended = false;
+    SourceLocation start, end;
+    Stmt *prevSt = NULL;
+    int nBytes = 0;
+    list<Stmt *> splittedStmts;
+    list<Stmt *> possiblySplittedStmts;
+    start = rewriter.getSourceMgr().getFileLoc(
+            compoundStmt->getLocStart());
+    end = rewriter.getSourceMgr().getFileLoc(
+            compoundStmt->getLocEnd());
+    int stmtSize = rewriter.getRangeSize(
+            SourceRange(compoundStmt->getLocStart(), compoundStmt->getLocEnd()));
+
+
+    for(auto st : compoundStmt->children()) {
+        if(!st) continue;
+        if(!started && !isa<DeclStmt>(st)) {
+            start = rewriter.getSourceMgr().getFileLoc(st->getLocStart());
+            end = rewriter.getSourceMgr().getFileLoc(st->getLocEnd());
+
+            SourceRange fileLocRange(start, end);
+            int rangeSize = rewriter.getRangeSize(fileLocRange);
+            /*
+            SourceLocation expansionStart = rewriter.getSourceMgr().getExpansionRange(start).first;
+            SourceLocation expansionEnd = rewriter.getSourceMgr().getExpansionRange(end).second;
+            SourceRange expansionRange(expansionStart, expansionEnd);
+            int expansionRangeSize = rewriter.getRangeSize(expansionRange);
+            */
+            errs() << "nBytes before adding this function: " << nBytes << "\n";
+            errs() << "start to checking " << start.printToString(rewriter.getSourceMgr()) <<
+                " to " << end.printToString(rewriter.getSourceMgr()) << "\n";
+            errs() << "getRangeSize: " << rangeSize << "\n";
+
+            int size = rewriter.getRangeSize(fileLocRange);
+
+            int goDeeper = rootFunctionSize > 0 ? rootFunctionSize : stmtSize * 0.5;
+            if(size > goDeeper) {
+                errs() << "the block is bigger than " << goDeeper 
+                    << "; split the block\n";
+                Stmt *subStmt = NULL;
+                if(ForStmt *s = dyn_cast<ForStmt>(st)) {
+                    subStmt = s->getBody();
+                } else if(WhileStmt *s = dyn_cast<WhileStmt>(st)) {
+                    subStmt = s->getBody();
+                } else if(IfStmt *s = dyn_cast<IfStmt>(st)) {
+                    selectSplitRegion(s->getThen(), goDeeper);
+                    selectSplitRegion(s->getElse(), goDeeper);
+                    return;
+                } else if(SwitchStmt *s = dyn_cast<SwitchStmt>(st)) {
+                    SwitchCase *list = s->getSwitchCaseList();
+                    do {
+                        errs() << "invoke new selectSplitRegion\n";
+                        selectSplitRegion(list, goDeeper);
+                    } while((list = list->getNextSwitchCase()));
+                    return;
+                } else if(CompoundStmt *s = dyn_cast<CompoundStmt>(st)) {
+                    subStmt = s;
+                }
+                if(subStmt) {
+                    selectSplitRegion(st, goDeeper);
+                    return;
+                }
+                errs() << "no compound statement inside\n";
+            }
+
+            nBytes += size;
+
+            errs() << "nBytes: " << nBytes << "\n";
+            possiblySplittedStmts.push_back(st);
+            if(nBytes >= threshold) {
+                errs() << "split function since the function size is large\n";
+                splittedStmts.assign(possiblySplittedStmts.begin(),
+                        possiblySplittedStmts.end());
+
+                stmtParser.splitStartLocation = start;
+                started = true;
+                ended = true;
+            }
+        }
+
+        //Check start & end point
+        if(!started && !ended && isSplitStartPoint(st)) {
+            nBytes = 0;
+            splittedStmts.clear();
+            possiblySplittedStmts.clear();
+            start = rewriter.getSourceMgr().getFileLoc(
+                    st->getLocStart());
+            if(splitMethod == LOOP_ONLY) {
+                stmtParser.splitStartLocation = start;
+                splittedStmts.push_back(st);
+                started = true;
+                ended= true;
+            } else if(splitMethod == STRING) {
+                stmtParser.splitStartLocation = start;
+                started = true;
+            }
+        }
+        if(started && !ended && isSplitEndPoint(st)) {
+            ended = true;
+        }
+
+        if(started && !ended) {
+            splittedStmts.push_back(st);
+        }
+
+        //start and end location are found
+        if(ended) {
+            if(reallySplit(&splittedStmts)) {
+                for(auto stmt : splittedStmts) {
+                    stmtParser.TraverseStmt(stmt);
+                }
+
+                splitFunction(&splittedStmts);
+            }
+
+            started = false;
+            ended = false;
+            stmtParser.rewrittenLocations.clear();
+            SourceLocation temp;
+            stmtParser.splitStartLocation = temp;
+            nBytes = 0;
+            splittedStmts.clear();
+            possiblySplittedStmts.clear();
+        }
+
+        prevSt = st;
+    }
 }
 
 
@@ -60,106 +203,7 @@ bool FunctionSplitter::VisitFunctionDecl(FunctionDecl *fd) {
     if(fd->isThisDeclarationADefinition()) {
         currentFunctionReturnType = fd->getReturnType();
         Stmt *body = fd->getBody();
-        bool started = false, ended = false;
-        SourceLocation start, end;
-        Stmt *prevSt = NULL;
-        unsigned int nStmts = 0;
-        list<Stmt *> splittedStmts;
-        list<Stmt *> possiblySplittedStmts;
-        start = rewriter.getSourceMgr().getFileLoc(body->getLocStart());
-        end = rewriter.getSourceMgr().getFileLoc(body->getLocEnd());
-        unsigned int functionSize = rewriter.getRangeSize(
-                SourceRange(start, end));
-
-        for(auto st : body->children()) {
-            //save this point so if the function is too long, cut it
-            if(!started && !isa<DeclStmt>(st)) {
-                /*
-                if(ForStmt *forStmt = dyn_cast<ForStmt>(st)) {
-                    if(CompoundStmt *body = dyn_cast<CompoundStmt>(forStmt->getBody())) {
-                        nStmts += body->size();
-                    }
-                } else if(WhileStmt * whileStmt = dyn_cast<WhileStmt>(st)) {
-                    if(CompoundStmt *body = dyn_cast<CompoundStmt>(whileStmt->getBody())) {
-                        nStmts += body->size();
-                    }
-                } else {
-                    nStmts++;
-                }
-                */
-                start = rewriter.getSourceMgr().getFileLoc(st->getLocStart());
-                end = rewriter.getSourceMgr().getFileLoc(st->getLocEnd());
-
-                nStmts += rewriter.getRangeSize(
-                        SourceRange(start, end));
-                errs() << fd->getName() << ": nStmts: " << nStmts <<"\n";
-
-                errs() << "start: " << start.printToString(rewriter.getSourceMgr()) << "\n";
-                errs() << "end: " << end.printToString(rewriter.getSourceMgr()) << "\n";
-                possiblySplittedStmts.push_back(st);
-                if(nStmts >= 500) {
-                    errs() << "split function since the function size is large\n";
-                    splittedStmts.assign(possiblySplittedStmts.begin(),
-                            possiblySplittedStmts.end());
-
-                    stmtParser.splitStartLocation = start;
-                    started = true;
-                    ended = true;
-                }
-            }
-
-            //Check start & end point
-            if(!started && !ended && isSplitStartPoint(st)) {
-                nStmts = 0;
-                splittedStmts.clear();
-                possiblySplittedStmts.clear();
-                start = rewriter.getSourceMgr().getFileLoc(
-                        st->getLocStart());
-                if(splitMethod == LOOP_ONLY) {
-                    stmtParser.splitStartLocation = start;
-                    splittedStmts.push_back(st);
-                    started = true;
-                    ended= true;
-                } else if(splitMethod == STRING) {
-                    stmtParser.splitStartLocation = start;
-                    started = true;
-                }
-            }
-            if(started && !ended && isSplitEndPoint(st)) {
-                ended = true;
-            }
-
-            if(started && !ended) {
-                splittedStmts.push_back(st);
-            }
-
-            //start and end location are found
-            if(ended) {
-                if(reallySplit(&splittedStmts)) {
-                    for(auto stmt : splittedStmts) {
-                        stmtParser.TraverseStmt(stmt);
-                    }
-
-                    /*
-                    errs() << "start spliting from:" << start.printToString(rewriter.getSourceMgr()) << "\n";
-                    errs() << " to:" << end.printToString(rewriter.getSourceMgr()) << "\n";
-                    */
-
-                    splitFunction(&splittedStmts);
-                }
-
-                started = false;
-                ended = false;
-                stmtParser.rewrittenLocations.clear();
-                SourceLocation temp;
-                stmtParser.splitStartLocation = temp;
-                nStmts = 0;
-                splittedStmts.clear();
-                possiblySplittedStmts.clear();
-            }
-
-            prevSt = st;
-        }
+        selectSplitRegion(body);
     }
     return true;
 }
@@ -303,9 +347,6 @@ void FunctionSplitter::splitFunction(list<Stmt *> *splittedStmts) {
         }
         //end = end.getLocWithOffset(1);
     }
-
-    SourceLocation fileEnd = rewriter.getSourceMgr().getLocForEndOfFile(
-            rewriter.getSourceMgr().getMainFileID());
 
     SourceRange range(start, end);
     newFunctionDecl += " {\n";
