@@ -68,7 +68,7 @@ void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSiz
 
     for(auto st : compoundStmt->children()) {
         if(!st) continue;
-        if(!started && !isa<DeclStmt>(st)) {
+        if(splitMethod != STRING && !started && !isa<DeclStmt>(st)) {
             start = rewriter.getSourceMgr().getFileLoc(st->getLocStart());
             end = rewriter.getSourceMgr().getFileLoc(st->getLocEnd());
 
@@ -87,7 +87,7 @@ void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSiz
 
             int size = rewriter.getRangeSize(fileLocRange);
 
-            int goDeeper = rootFunctionSize > 0 ? rootFunctionSize : stmtSize * 0.5;
+            int goDeeper = rootFunctionSize > 0 ? rootFunctionSize : stmtSize * 0.6;
             if(size > goDeeper) {
                 errs() << "the block is bigger than " << goDeeper 
                     << "; split the block\n";
@@ -100,6 +100,7 @@ void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSiz
                     selectSplitRegion(s->getThen(), goDeeper);
                     selectSplitRegion(s->getElse(), goDeeper);
                     return;
+                    /*
                 } else if(SwitchStmt *s = dyn_cast<SwitchStmt>(st)) {
                     SwitchCase *list = s->getSwitchCaseList();
                     do {
@@ -107,6 +108,7 @@ void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSiz
                         selectSplitRegion(list, goDeeper);
                     } while((list = list->getNextSwitchCase()));
                     return;
+                    */
                 } else if(CompoundStmt *s = dyn_cast<CompoundStmt>(st)) {
                     subStmt = s;
                 }
@@ -133,6 +135,11 @@ void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSiz
         }
 
         //Check start & end point
+        if(!started && !ended && !isSplitStartPoint(st)) {
+            selectSplitRegion(st, -1);
+            continue;
+        }
+
         if(!started && !ended && isSplitStartPoint(st)) {
             nBytes = 0;
             splittedStmts.clear();
@@ -150,6 +157,7 @@ void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSiz
             }
         }
         if(started && !ended && isSplitEndPoint(st)) {
+            splittedStmts.push_back(st);
             ended = true;
         }
 
@@ -423,7 +431,7 @@ void FunctionSplitter::splitFunction(list<Stmt *> *splittedStmts) {
 
 
 bool FunctionSplitter::isSplitStartPoint(Stmt *stmt) {
-    return false;
+    //return false;
     if(splitMethod == STRING) {
         string SPLIT_START_STRING = "__SPLIT_START";
         if(ImplicitCastExpr *expr = dyn_cast<ImplicitCastExpr>(stmt)) {
@@ -454,7 +462,7 @@ bool FunctionSplitter::isSplitStartPoint(Stmt *stmt) {
 
 
 bool FunctionSplitter::isSplitEndPoint(Stmt *stmt) {
-    return false;
+    //return false;
     string SPLIT_END_STRING = "__SPLIT_END";
     if(ImplicitCastExpr *expr = dyn_cast<ImplicitCastExpr>(stmt)) {
         Expr *subExpr = expr->getSubExpr();
@@ -505,7 +513,10 @@ void FunctionSplitASTConsumer::rewriteFunctionDecls() {
 
 
 bool FunctionSplitter::StmtParser::isLocalVariable(DeclRefExpr *st) {
-    if(!splitStartLocation.isValid()) return false;
+    if(!splitStartLocation.isValid()) {
+        errs() << "splitStartLocation is not valid\n";
+        return false;
+    }
     ValueDecl *decl = st->getDecl();
     //QualType type = decl->getType();
     /*

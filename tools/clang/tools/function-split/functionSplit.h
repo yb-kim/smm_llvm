@@ -31,7 +31,7 @@ public:
                 ast_context_->getLangOpts());
         functionIndex = 0;
         stmtParser.ast_context_ = ast_context_;
-        splitMethod = LOOP_ONLY;
+        splitMethod = STRING;
         //nStmts = 0;
     }
 
