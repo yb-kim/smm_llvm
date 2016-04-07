@@ -25,8 +25,12 @@ public:
         : ast_context_(&(ci->getASTContext())) {
         stmtParser.localVarDecls = &localVarDecls;
         stmtParser.constantDecls = &constantDecls;
+        stmtParser.constantsInFunction = &constantsInFunction;
         stmtParser.varDeclsInsideSplitRange = &varDeclsInsideSplitRange;
         stmtParser.varDeclStringsInsideSplitRange = &varDeclStringsInsideSplitRange;
+        stmtParser.lastDeclRefs = &lastDeclRefs;
+
+        lastDeclRefChecker.lastDeclRefs = &lastDeclRefs;
         rewriter.setSourceMgr(ast_context_->getSourceManager(),
                 ast_context_->getLangOpts());
         functionIndex = 0;
@@ -41,6 +45,7 @@ public:
 
     std::set<string *> *rewrittenFunctions;
     std::set<string *> *rewrittenFunctionDecls;
+    map<VarDecl *, SourceLocation> lastDeclRefs;
     SourceLocation *mainFunctionDecl;
     SourceLocation *firstFunctionDecl;
     clang::ASTContext* ast_context_; // used for getting additional AST info
@@ -55,7 +60,9 @@ public:
         virtual bool VisitVarDecl(VarDecl *st);
         set<VarDecl *> *localVarDecls;
         set<VarDecl *> *constantDecls;
+        set<VarDecl *> *constantsInFunction;
         set<VarDecl *> *varDeclsInsideSplitRange;
+        map<VarDecl *, SourceLocation> *lastDeclRefs;
         set<SourceLocation> rewrittenLocations;
         list<string> *varDeclStringsInsideSplitRange;
         ASTContext* ast_context_;
@@ -63,11 +70,18 @@ public:
 
     StmtParser stmtParser;
 
+    class LastDeclRefChecker : public clang::RecursiveASTVisitor<LastDeclRefChecker> {
+    public:
+        virtual bool VisitDeclRefExpr(DeclRefExpr *st);
+        map<VarDecl *, SourceLocation> *lastDeclRefs;
+    };
 
+    LastDeclRefChecker lastDeclRefChecker;
 
 private:
     set<VarDecl *> localVarDecls;
     set<VarDecl *> constantDecls;
+    set<VarDecl *> constantsInFunction;
     set<VarDecl *> varDeclsInsideSplitRange;
     list<string> varDeclStringsInsideSplitRange;
     //list<Stmt *> splittedStmts;

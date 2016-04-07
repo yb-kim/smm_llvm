@@ -10,16 +10,20 @@ int threshold;
 
 
 int main(int argc, const char **argv) {
-    cl::OptionCategory functionSplitterCategory("function splitter options");
-    clang::tooling::CommonOptionsParser op(argc, argv, functionSplitterCategory);
+    cl::OptionCategory functionSplitterCategory(
+            "function splitter options");
+    clang::tooling::CommonOptionsParser op(
+            argc, argv, functionSplitterCategory);
 
-    clang::tooling::ClangTool tool(op.getCompilations(), op.getSourcePathList());
+    clang::tooling::ClangTool tool(
+            op.getCompilations(), op.getSourcePathList());
 
     int threshold_defalut = 700;
     if(argc >= 1) {
         string option(argv[1]);
         if(option.substr(0, 11) == "--threshold") {
-            threshold = atoi(option.substr(11, option.length()+1).c_str());
+            threshold = atoi(option.substr(
+                        11, option.length()+1).c_str());
             errs() << "threshold is set to " << threshold << "\n";
         }
         else threshold = threshold_defalut;
@@ -63,7 +67,12 @@ void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSiz
     end = rewriter.getSourceMgr().getFileLoc(
             compoundStmt->getLocEnd());
     int stmtSize = rewriter.getRangeSize(
-            SourceRange(compoundStmt->getLocStart(), compoundStmt->getLocEnd()));
+            SourceRange(compoundStmt->getLocStart(), 
+                compoundStmt->getLocEnd()));
+    
+    if(rootFunctionSize < 0) {
+        lastDeclRefChecker.TraverseStmt(compoundStmt);
+    }
 
 
     for(auto st : compoundStmt->children()) {
@@ -81,7 +90,8 @@ void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSiz
             int expansionRangeSize = rewriter.getRangeSize(expansionRange);
             */
             errs() << "nBytes before adding this function: " << nBytes << "\n";
-            errs() << "start to checking " << start.printToString(rewriter.getSourceMgr()) <<
+            errs() << "start to checking " << 
+                start.printToString(rewriter.getSourceMgr()) <<
                 " to " << end.printToString(rewriter.getSourceMgr()) << "\n";
             errs() << "getRangeSize: " << rangeSize << "\n";
 
@@ -168,6 +178,15 @@ void FunctionSplitter::selectSplitRegion(Stmt *compoundStmt, int rootFunctionSiz
         //start and end location are found
         if(ended) {
             if(reallySplit(&splittedStmts)) {
+                SourceLocation end = rewriter.getSourceMgr().getFileLoc(
+                        splittedStmts.back()->getLocEnd());
+                FullSourceLoc fdLoc(end, rewriter.getSourceMgr());
+                for(auto varDecls : lastDeclRefs) {
+                    SourceLocation lastVarRefLocation = varDecls.second;
+                    if(!fdLoc.isBeforeInTranslationUnitThan(lastVarRefLocation)) {
+                        constantsInFunction.insert(varDecls.first);
+                    }
+                }
                 for(auto stmt : splittedStmts) {
                     stmtParser.TraverseStmt(stmt);
                 }
@@ -199,8 +218,8 @@ bool FunctionSplitter::VisitFunctionDecl(FunctionDecl *fd) {
                     fd->getLocStart());
         }
         else {
-            FullSourceLoc fdLoc(rewriter.getSourceMgr().getFileLoc(fd->getLocStart()),
-                    rewriter.getSourceMgr());
+            FullSourceLoc fdLoc(rewriter.getSourceMgr().getFileLoc(
+                        fd->getLocStart()), rewriter.getSourceMgr());
             if(fdLoc.isBeforeInTranslationUnitThan(*firstFunctionDecl)) {
                 *firstFunctionDecl = rewriter.getSourceMgr().getFileLoc(
                         fd->getLocStart());
@@ -235,8 +254,8 @@ void FunctionSplitter::splitFunction(list<Stmt *> *splittedStmts) {
     string splitFunctionCall = "";
     LangOptions langOpts;
     for(auto st : varDeclsInsideSplitRange) {
-        SourceLocation end = Lexer::getLocForEndOfToken(st->getLocEnd(), 0, rewriter.getSourceMgr(), 
-                langOpts);
+        SourceLocation end = Lexer::getLocForEndOfToken(
+                st->getLocEnd(), 0, rewriter.getSourceMgr(), langOpts);
         SourceRange range(st->getLocStart(), end);
         if(!st->hasInit() || isa<InitListExpr>(st->getInit())) {
             rewriter.RemoveText(range);
@@ -244,13 +263,17 @@ void FunctionSplitter::splitFunction(list<Stmt *> *splittedStmts) {
             QualType type = st->getType();
             string typeString = type.getAsString();
             if(typeString.find("[") != string::npos) {
-                typeString = typeString.substr(0, typeString.find("[")-1).substr(0, typeString.rfind(" "));
+                typeString = typeString.substr(
+                        0, typeString.find("[")-1).substr(0, typeString.rfind(" "));
             }
-            SourceLocation nameStart = st->getLocStart().getLocWithOffset(typeString.length()+1);
+            SourceLocation nameStart = st->getLocStart().getLocWithOffset(
+                    typeString.length()+1);
             rewriter.InsertTextBefore(nameStart, "(*");
-            rewriter.InsertTextAfter(nameStart.getLocWithOffset(string(st->getName()).length()), ")");
+            rewriter.InsertTextAfter(nameStart.getLocWithOffset(
+                        string(st->getName()).length()), ")");
             rewriter.RemoveText(SourceRange(
-                        st->getLocStart(), st->getLocStart().getLocWithOffset(typeString.length())));
+                        st->getLocStart(), 
+                        st->getLocStart().getLocWithOffset(typeString.length())));
         }
     }
 
@@ -298,7 +321,7 @@ void FunctionSplitter::splitFunction(list<Stmt *> *splittedStmts) {
         }
     }
 
-    if(!constantDecls.empty()) {
+    if(!constantDecls.empty() && !localVarDecls.empty()) {
         newFunctionDecl += ", ";
         splitFunctionCall += ", ";
     }
@@ -427,6 +450,7 @@ void FunctionSplitter::splitFunction(list<Stmt *> *splittedStmts) {
 
     localVarDecls.clear();
     constantDecls.clear();
+    constantsInFunction.clear();
 }
 
 
@@ -545,13 +569,34 @@ bool FunctionSplitter::StmtParser::VisitDeclRefExpr(DeclRefExpr *st) {
     if(isLocalVariable(st)) {
         VarDecl *decl = dyn_cast<VarDecl>(st->getDecl());
         if(constantDecls->find(decl) != constantDecls->end()) return true;
+
+        if(constantsInFunction->find(decl) != constantsInFunction->end()) {
+            constantDecls->insert(decl);
+            return true;
+        }
+
         QualType type = decl->getType();
         if(type.isConstant(*ast_context_) || ConstantArrayType::classof(type.getTypePtr())) { 
             constantDecls->insert(decl);
             return true; 
         }
 
+        //check if the variable is used after split
         SourceLocation start = rewriter.getSourceMgr().getFileLoc(st->getLocStart());
+        /*
+        SourceLocation lastRefLocation = (*lastDeclRefs)[decl];
+        FullSourceLoc fdLoc(rewriter.getSourceMgr().getFileLoc(
+                    prevLocation), rewriter.getSourceMgr());
+        if(fdLoc.isBeforeInTranslationUnitThan(refLocation)) {
+            (*lastDeclRefs)[decl] = refLocation;
+        if(lastRefLocation == start) {
+            errs() << "insert this to constantDecls: ";
+            constantDecls->insert(decl);
+            localVarDecls->erase(decl);
+            return true;
+        }
+        */
+
         if(rewrittenLocations.find(start) != rewrittenLocations.end()) return true;
         /*
         rewriter.InsertTextBefore(start, "(*");
@@ -615,5 +660,26 @@ bool FunctionSplitter::StmtParser::VisitVarDecl(VarDecl *st) {
     varDeclStringsInsideSplitRange->push_back(declString);
     //rewriter.InsertTextBefore(splitStartLocation, st->getNameAsString());
     */
+    return true;
+}
+
+
+bool FunctionSplitter::LastDeclRefChecker::VisitDeclRefExpr(DeclRefExpr *st) {
+    if(VarDecl *decl = dyn_cast<VarDecl>(st->getDecl())) {
+        SourceLocation refLocation = rewriter.getSourceMgr().getFileLoc(
+            st->getLocStart());
+        if(lastDeclRefs->find(decl) != lastDeclRefs->end()) {
+            //there is varDecl in the set
+            SourceLocation prevLocation = (*lastDeclRefs)[decl];
+            FullSourceLoc fdLoc(rewriter.getSourceMgr().getFileLoc(
+                        prevLocation), rewriter.getSourceMgr());
+            if(fdLoc.isBeforeInTranslationUnitThan(refLocation)) {
+                (*lastDeclRefs)[decl] = refLocation;
+            }
+        }
+        else {
+            (*lastDeclRefs)[decl] = refLocation;
+        }
+    }
     return true;
 }
